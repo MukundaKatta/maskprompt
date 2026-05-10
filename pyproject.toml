@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "maskprompt"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sub-millisecond PII redaction for prompts before they reach an LLM."
 authors = [{ name = "Mukunda Katta" }]
 license = "MIT OR Apache-2.0"

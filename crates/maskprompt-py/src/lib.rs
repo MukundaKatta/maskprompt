@@ -25,6 +25,9 @@ fn rule_from_str(name: &str) -> PyResult<BuiltinRule> {
         "AWS_ACCESS_KEY" => BuiltinRule::AwsAccessKey,
         "GITHUB_TOKEN" => BuiltinRule::GithubToken,
         "JWT" => BuiltinRule::Jwt,
+        "URL" => BuiltinRule::Url,
+        "MAC_ADDRESS" => BuiltinRule::MacAddress,
+        "IBAN" => BuiltinRule::Iban,
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown built-in rule: {other}"
@@ -33,15 +36,27 @@ fn rule_from_str(name: &str) -> PyResult<BuiltinRule> {
     })
 }
 
+/// Strategy parser. Supports the four name-only strategies plus the
+/// parametric `truncate:N` form (e.g. `truncate:4` keeps the first 4
+/// chars of the matched value before the tag).
 fn strategy_from_str(name: &str) -> PyResult<Strategy> {
-    Ok(match name.to_lowercase().as_str() {
+    let name = name.to_lowercase();
+    if let Some(rest) = name.strip_prefix("truncate:") {
+        let n: u8 = rest.parse().map_err(|_| {
+            PyValueError::new_err(format!(
+                "truncate strategy needs a u8 prefix length: {name:?}"
+            ))
+        })?;
+        return Ok(Strategy::Truncate(n));
+    }
+    Ok(match name.as_str() {
         "tag" => Strategy::Tag,
         "hash" => Strategy::Hash,
         "fixed" => Strategy::Fixed,
         "remove" => Strategy::Remove,
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown strategy: {other} (expected tag/hash/fixed/remove)"
+                "unknown strategy: {other} (expected tag/hash/fixed/remove/truncate:N)"
             )))
         }
     })

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-10
+
+### Added
+- Three more built-in detectors: `URL` (http/https), `MAC_ADDRESS`,
+  `IBAN` (bank account numbers, 2-letter country + check + body).
+- `Strategy::Truncate(prefix)` (Rust) / `"truncate:N"` (Python): keep the
+  first N chars of the matched value, then append `…<TAG>`. Useful when
+  the prefix carries debugging signal (BIN of a card, domain of an email).
+  Falls back to `Tag` when the value is shorter than the prefix so we
+  don't accidentally leak the whole value.
+
 ## [0.1.0] - 2026-05-09
 
 ### Added

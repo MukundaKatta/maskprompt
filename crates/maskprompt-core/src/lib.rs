@@ -63,6 +63,13 @@ pub enum BuiltinRule {
     GithubToken,
     /// JWTs (three base64url segments separated by `.`).
     Jwt,
+    /// HTTP/HTTPS URLs.
+    Url,
+    /// MAC addresses in colon or dash form (`AA:BB:CC:DD:EE:FF`).
+    MacAddress,
+    /// IBAN bank account numbers. Matches the standard 2-letter country
+    /// code + 2 check digits + up to 30 alphanumerics.
+    Iban,
 }
 
 impl BuiltinRule {
@@ -78,6 +85,9 @@ impl BuiltinRule {
             Self::AwsAccessKey => "AWS_ACCESS_KEY",
             Self::GithubToken => "GITHUB_TOKEN",
             Self::Jwt => "JWT",
+            Self::Url => "URL",
+            Self::MacAddress => "MAC_ADDRESS",
+            Self::Iban => "IBAN",
         }
     }
 
@@ -115,11 +125,21 @@ impl BuiltinRule {
             Self::GithubToken => r"\bgh[pours]_[A-Za-z0-9]{36,}\b",
             // JWT: three url-safe base64 segments. Allows long signatures.
             Self::Jwt => r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
+            // URLs: http(s) + host + optional path. Conservative; doesn't
+            // try to catch unicode-heavy IDN forms.
+            Self::Url => {
+                r"https?://[A-Za-z0-9.\-]+(?::\d+)?(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?"
+            }
+            // MAC addresses in 6-group colon or dash notation.
+            Self::MacAddress => r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
+            // IBAN: 2 letters + 2 digits + 11–30 alphanumerics. Length cap
+            // matches the longest IBAN spec (Malta = 31 chars total).
+            Self::Iban => r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b",
         }
     }
 
     /// Return all built-in rules in declaration order.
-    pub fn all() -> [BuiltinRule; 9] {
+    pub fn all() -> [BuiltinRule; 12] {
         [
             Self::Email,
             Self::UsPhone,
@@ -130,6 +150,9 @@ impl BuiltinRule {
             Self::AwsAccessKey,
             Self::GithubToken,
             Self::Jwt,
+            Self::Url,
+            Self::MacAddress,
+            Self::Iban,
         ]
     }
 }
@@ -148,6 +171,10 @@ pub enum Strategy {
     Fixed,
     /// Replace with the empty string.
     Remove,
+    /// Keep the first `prefix` characters of the original value, then
+    /// append `…<TAG>`. Useful when the prefix carries debugging signal
+    /// (e.g. `4111…<CREDIT_CARD>` for the BIN of a card number).
+    Truncate(u8),
 }
 
 /// One match found by [`Masker::mask`].
@@ -327,6 +354,17 @@ fn render(kind: &str, value: &str, strategy: Strategy) -> String {
         }
         Strategy::Fixed => "█".repeat(value.chars().count()),
         Strategy::Remove => String::new(),
+        Strategy::Truncate(prefix) => {
+            let prefix = prefix as usize;
+            let kept: String = value.chars().take(prefix).collect();
+            if kept.chars().count() == value.chars().count() {
+                // Whole value fit — no truncation needed; treat as Tag so we
+                // don't leak a value that was supposedly truncated.
+                format!("<{kind}>")
+            } else {
+                format!("{kept}…<{kind}>")
+            }
+        }
     }
 }
 
@@ -458,6 +496,62 @@ mod tests {
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.signature_part_long_enough";
         let r = m.mask(&format!("auth: {jwt} ok"), Strategy::Tag);
         assert_eq!(r.masked, "auth: <JWT> ok");
+    }
+
+    #[test]
+    fn url_redacted() {
+        let m = Masker::builder()
+            .with_builtin(BuiltinRule::Url)
+            .build()
+            .unwrap();
+        let r = m.mask("see https://example.com/path?x=1", Strategy::Tag);
+        assert_eq!(r.masked, "see <URL>");
+    }
+
+    #[test]
+    fn mac_address_redacted() {
+        let m = Masker::builder()
+            .with_builtin(BuiltinRule::MacAddress)
+            .build()
+            .unwrap();
+        let r = m.mask("eth0 AA:BB:CC:DD:EE:FF up", Strategy::Tag);
+        assert_eq!(r.masked, "eth0 <MAC_ADDRESS> up");
+    }
+
+    #[test]
+    fn iban_redacted() {
+        let m = Masker::builder()
+            .with_builtin(BuiltinRule::Iban)
+            .build()
+            .unwrap();
+        // Real IBAN test value (Germany).
+        let r = m.mask("from DE89370400440532013000 today", Strategy::Tag);
+        assert_eq!(r.masked, "from <IBAN> today");
+    }
+
+    #[test]
+    fn truncate_strategy_keeps_prefix_and_appends_tag() {
+        let m = Masker::builder()
+            .with_builtin(BuiltinRule::CreditCard)
+            .build()
+            .unwrap();
+        // BIN-style preservation: keep first 4 digits.
+        let r = m.mask("paid 4111-1111-1111-1111 today", Strategy::Truncate(4));
+        assert_eq!(r.masked, "paid 4111…<CREDIT_CARD> today");
+    }
+
+    #[test]
+    fn truncate_strategy_short_value_falls_back_to_tag() {
+        let m = email_masker();
+        // Value is "a@b.com" (7 chars). Truncate(20) wouldn't actually
+        // truncate, so it falls back to <TAG> rather than leaking the value.
+        let r = m.mask("hi a@b.com", Strategy::Truncate(20));
+        assert_eq!(r.masked, "hi <EMAIL>");
+    }
+
+    #[test]
+    fn all_returns_twelve_rules() {
+        assert_eq!(BuiltinRule::all().len(), 12);
     }
 
     #[test]
